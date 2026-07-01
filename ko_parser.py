@@ -212,7 +212,7 @@ def validate_export_against_ko(export_rows, ko_rows):
                     "jn": export_row["jn"],
                     "send": export_row["send"],
                     "keycode4": export_row["keycode4"],
-                    "export_subject": export_row["subject_ko_format"],
+                    "export_subject": export_row["subject"],
                     "ko_subject": ko_row["subject"],
                     "status": "Match",
                 }
@@ -225,7 +225,7 @@ def validate_export_against_ko(export_rows, ko_rows):
                         "jn": export_row["jn"],
                         "send": export_row["send"],
                         "keycode4": export_row["keycode4"],
-                        "export_subject": export_row["subject_ko_format"],
+                        "export_subject": export_row["subject"],
                         "ko_subject": ko_row["subject"],
                         "status": "Subject mismatch",
                     }
@@ -236,7 +236,7 @@ def validate_export_against_ko(export_rows, ko_rows):
                         "jn": export_row["jn"],
                         "send": export_row["send"],
                         "keycode4": export_row["keycode4"],
-                        "export_subject": export_row["subject_ko_format"],
+                        "export_subject": export_row["subject"],
                         "ko_subject": "",
                         "status": "Not in KO doc",
                     }
