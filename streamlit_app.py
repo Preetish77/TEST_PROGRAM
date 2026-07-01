@@ -1,5 +1,4 @@
 import io
-import json
 
 import streamlit as st
 
@@ -12,112 +11,163 @@ st.set_page_config(
 )
 
 st.title("Campaign Export Analyzer")
-st.caption("Upload a comma-delimited campaign export file. Works in any browser — no install needed.")
-
-uploaded = st.file_uploader(
-    "Choose your export file",
-    type=["csv", "txt"],
-    help="CSV or comma-delimited export (max 50 MB)",
+st.caption(
+    "Upload your campaign export CSV and optional KO document. "
+    "Validates subject lines (SL) and Keycode 4 against the KO doc."
 )
 
-if uploaded:
-    st.success(f"Selected: **{uploaded.name}** ({uploaded.size:,} bytes)")
+col1, col2 = st.columns(2)
 
-    if st.button("Analyze file", type="primary", use_container_width=False):
-        with st.spinner("Analyzing…"):
-            try:
-                report = analyze_file(io.BytesIO(uploaded.getvalue()), uploaded.name)
-                st.session_state["report"] = report
-            except Exception as exc:
-                st.error(f"Analysis failed: {exc}")
+with col1:
+    uploaded = st.file_uploader(
+        "Campaign export CSV",
+        type=None,
+        help="Comma-delimited export (.csv, .txt, or no extension — e.g. P_JHM_Cancer_ATE_260625)",
+    )
+
+with col2:
+    ko_uploaded = st.file_uploader(
+        "KO document (Creative details)",
+        type=None,
+        help="KO Creative details sheet as .csv or .xlsx",
+    )
+
+if uploaded:
+    st.info(f"Export: **{uploaded.name}** ({uploaded.size:,} bytes)")
+if ko_uploaded:
+    st.info(f"KO doc: **{ko_uploaded.name}**")
+
+if uploaded and st.button("Analyze & validate", type="primary"):
+    with st.spinner("Analyzing export and validating against KO…"):
+        try:
+            export_bytes = uploaded.getvalue()
+            ko_bytes = ko_uploaded.getvalue() if ko_uploaded else None
+
+            report = analyze_file(
+                io.BytesIO(export_bytes),
+                uploaded.name,
+                io.BytesIO(ko_bytes) if ko_bytes else None,
+                ko_uploaded.name if ko_uploaded else None,
+            )
+            st.session_state["report"] = report
+        except Exception as exc:
+            st.error(f"Analysis failed: {exc}")
 
 if "report" in st.session_state:
     d = st.session_state["report"]
-    eng = d["engagement"]
+    ex = d["extracts"]
+    summ = d["summary"]
+    validation = d.get("ko_validation")
 
     st.divider()
-    st.subheader("Summary")
 
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-    c1.metric("Rows", f"{d['row_count']:,}")
-    c2.metric("Columns", d["column_count"])
-    c3.metric("Recipients", f"{d['recipients']['unique_count']:,}")
-    c4.metric("Templates", d["templates"]["unique_count"])
-    c5.metric("Open rate", f"{eng['open_rate']}%" if eng["open_rate"] is not None else "—")
-    c6.metric("Click rate", f"{eng['click_rate']}%" if eng["click_rate"] is not None else "—")
-    c7.metric("Errors", d["errors_count"])
-
-    st.subheader("Campaign")
-    if d["campaign"]:
-        st.json(d["campaign"])
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("CSV rows", f"{d['row_count']:,}")
+    m2.metric("Unique subjects", ex["unique_subject_count"])
+    m3.metric("Unique JN", ex["unique_job_number_count"])
+    m4.metric("SL rows (export)", len(ex["export_sl_rows"]))
+    if validation:
+        m5.metric("KO matches", validation["match_count"])
     else:
-        st.info("No campaign metadata found in the file.")
+        m5.metric("Delivered", summ["delivered"])
 
-    if d["date_range"]["earliest"]:
-        st.write(
-            f"**Date range:** {d['date_range']['earliest']} → {d['date_range']['latest']}"
+    if validation:
+        st.subheader("KO validation — SL & Keycode 4")
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("Matched", validation["match_count"])
+        v2.metric("Subject mismatches", validation["mismatch_count"])
+        v3.metric("Not in KO", validation["export_only_count"])
+        v4.metric("Missing from export", validation["ko_only_count"])
+
+        all_results = (
+            validation["matched"]
+            + validation["mismatches"]
+            + validation["export_only"]
+            + validation["ko_only"]
+        )
+        if all_results:
+            st.dataframe(all_results, use_container_width=True, hide_index=True)
+
+        if validation["mismatch_count"] == 0 and validation["export_only_count"] == 0 and validation["ko_only_count"] == 0:
+            st.success("All SL and Keycode 4 values match the KO document.")
+        elif validation["mismatch_count"] or validation["export_only_count"] or validation["ko_only_count"]:
+            st.warning("Some rows do not match the KO document. Review the table above.")
+
+        st.download_button(
+            "Download validation report.csv",
+            data=d["exports"]["validation_csv"],
+            file_name="ko_validation_report.csv",
+            mime="text/csv",
+        )
+    elif not ko_uploaded:
+        st.info(
+            "Upload the KO **Creative details** CSV to validate SL and Keycode 4. "
+            "In Excel: open the KO workbook → Creative details sheet → Save As CSV."
         )
 
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.subheader("Status breakdown")
-        st.dataframe(
-            [{"Status": s["name"], "Count": s["count"]} for s in d["status"]],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    with col_b:
-        st.subheader("Engagement")
+    st.subheader("KO-aligned export (SL rows)")
+    st.caption(
+        "Columns match the KO document: JN, Send, Subject Lines, Personalization, Keycode 4. "
+        "Personalized subjects use **[INS1]** as in the KO doc."
+    )
+    if ex["export_sl_rows"]:
         st.dataframe(
             [
-                {"Metric": "Delivered (unique)", "Value": eng["delivered_pairs"]},
-                {"Metric": "Opened (unique)", "Value": eng["opened_pairs"]},
-                {"Metric": "Clicked (unique)", "Value": eng["clicked_pairs"]},
-                {"Metric": "Open events (total)", "Value": eng["opened_events"]},
-                {"Metric": "Click events (total)", "Value": eng["clicked_events"]},
+                {
+                    "JN": r["jn"],
+                    "Send": r["send"],
+                    "Subject (KO format)": r["subject_ko_format"],
+                    "Personalization": r["personalization"],
+                    "Keycode 4": r["keycode4"],
+                    "Stream": r["c_stream_id"],
+                    "Creative code": r["c_creative_id"],
+                }
+                for r in ex["export_sl_rows"]
             ],
             use_container_width=True,
             hide_index=True,
         )
-
-    col_c, col_d = st.columns(2)
-
-    with col_c:
-        st.subheader("Streams")
-        st.dataframe(
-            [{"Stream": s["name"], "Events": s["count"]} for s in d["streams"]],
-            use_container_width=True,
-            hide_index=True,
+        st.download_button(
+            "Download KO-aligned export.csv",
+            data=d["exports"]["ko_aligned_csv"],
+            file_name="ko_aligned_export.csv",
+            mime="text/csv",
         )
 
-    with col_d:
-        st.subheader("Top recipients")
-        st.dataframe(
-            [{"Email": r["email"], "Events": r["count"]} for r in d["recipients"]["top"]],
-            use_container_width=True,
-            hide_index=True,
-        )
+    with st.expander("Unique subject lines (export format)"):
+        if ex["unique_subjects"]:
+            st.dataframe(
+                [
+                    {
+                        "#": i + 1,
+                        "subject": item["subject"],
+                        "has_nametoken": "Yes" if item["has_nametoken"] else "No",
+                    }
+                    for i, item in enumerate(ex["unique_subjects"])
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.download_button(
+                "Download subjects.csv",
+                data=d["exports"]["subjects_csv"],
+                file_name="unique_subjects.csv",
+                mime="text/csv",
+            )
 
-    with st.expander("Email templates", expanded=False):
-        st.dataframe(
-            [{"Template": t["name"], "Events": t["count"]} for t in d["templates"]["items"]],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    with st.expander("Status by stream", expanded=False):
-        for block in d["status_by_stream"]:
-            parts = ", ".join(f"{b['status']}: {b['count']:,}" for b in block["breakdown"])
-            st.markdown(f"**{block['stream']}** — {parts}")
-
-    st.download_button(
-        "Download report (JSON)",
-        data=json.dumps(d, indent=2),
-        file_name=f"report_{d['filename']}.json",
-        mime="application/json",
-    )
+    with st.expander("Unique job numbers (JN)"):
+        if ex["unique_job_numbers"]:
+            st.dataframe(
+                [{"#": i + 1, "JN": j} for i, j in enumerate(ex["unique_job_numbers"])],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.download_button(
+                "Download JN.csv",
+                data=d["exports"]["job_numbers_csv"],
+                file_name="unique_JN.csv",
+                mime="text/csv",
+            )
 
 st.divider()
-st.caption("Files are analyzed in memory and are not stored on the server.")
+st.caption("Files are processed in memory only and are not stored on the server.")
