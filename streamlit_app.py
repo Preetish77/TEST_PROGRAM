@@ -143,9 +143,8 @@ if "report" in st.session_state:
 
     st.subheader("KO validation (delivered rows only)")
     st.caption(
-        "Strict comparison on **JN + Send + Keycode 4 + subject**. "
-        "Curly vs straight apostrophes count as **Match**; corrupted characters (`?`, ``) flag **Special character mismatch**. "
-        "KO CSV is auto-decoded (UTF-8 or Excel cp1252)."
+        f"Comparing **Export:** `{d['filename']}` vs **KO doc:** `{d.get('ko_filename', 'KO document')}` · "
+        "Strict match on JN + Send + Keycode 4 + subject."
     )
     all_results = (
         validation["matched"]
@@ -153,6 +152,8 @@ if "report" in st.session_state:
         + validation["export_only"]
         + validation["ko_only"]
     )
+    export_col = f"Subject — Export ({d['filename']})"
+    ko_col = f"Subject — KO doc ({d.get('ko_filename', 'KO document')})"
     if all_results:
         display_rows = [
             {
@@ -160,8 +161,8 @@ if "report" in st.session_state:
                 "JN": r["jn"],
                 "Send": r["send"],
                 "Keycode 4": r["keycode4"],
-                "Export Subject": r["export_subject"],
-                "KO Subject": r["ko_subject"],
+                export_col: r["export_subject"],
+                ko_col: r["ko_subject"],
             }
             for r in all_results
         ]
@@ -213,14 +214,16 @@ if "report" in st.session_state:
         )
 
     st.subheader("Export SL rows (delivered)")
-    st.caption("EM01 → Initial: SL · EM02 → Echo: SL · EM03 → Initial · EM04 → Echo …")
+    st.caption(
+        f"Source: **{d['filename']}** · EM01 → Initial: SL · EM02 → Echo: SL · EM03 → Initial · EM04 → Echo …"
+    )
     st.dataframe(
         [
             {
                 "JN": r["jn"],
                 "Order": r["c_order_id"],
                 "Send": r["send"],
-                "Export SL": r["subject"],
+                f"Subject — Export ({d['filename']})": r["subject"],
                 "c_creative_id": r["c_creative_id"],
                 "Keycode 4": r["keycode4"],
                 "Stream": r["c_stream_id"],
