@@ -24,12 +24,18 @@ KO_COLUMNS = [
 
 
 def normalize_sl(text):
-    """Normalize subject lines for comparison ([INS1] vs ((NAMETOKEN)))."""
+    """Normalize subject lines for comparison ([INS1] vs ((NAMETOKEN)), dash variants, KO ? placeholders)."""
     value = (text or "").strip()
     value = NAMETOKEN_PATTERN.sub("[INS1]", value)
     value = INS1_PATTERN.sub("[INS1]", value)
     value = value.replace("\u2019", "'").replace("\u2018", "'")
-    value = value.replace("\ufffd", "'")
+    # Unicode dashes/hyphens (export often uses U+2011 non-breaking hyphen)
+    dash_chars = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d"
+    value = re.sub(f"[{re.escape(dash_chars)}]", "-", value)
+    # KO CSV exports sometimes replace special hyphens with literal "?"
+    while re.search(r"(\w)\?(\w)", value):
+        value = re.sub(r"(\w)\?(\w)", r"\1-\2", value)
+    value = value.replace("\ufffd", "-")
     value = re.sub(r"\s+", " ", value)
     return value.casefold()
 
