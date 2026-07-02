@@ -143,8 +143,9 @@ if "report" in st.session_state:
 
     st.subheader("KO validation (delivered rows only)")
     st.caption(
-        "Strict comparison on **JN + Send + Keycode 4 + subject** (special characters must match exactly). "
-        "**Special character mismatch** = same words but different dashes/hyphens (`‑`, `—`, `?`, etc.)."
+        "Strict comparison on **JN + Send + Keycode 4 + subject**. "
+        "Curly vs straight apostrophes count as **Match**; corrupted characters (`?`, ``) flag **Special character mismatch**. "
+        "KO CSV is auto-decoded (UTF-8 or Excel cp1252)."
     )
     all_results = (
         validation["matched"]
