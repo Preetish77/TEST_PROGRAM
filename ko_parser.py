@@ -23,6 +23,31 @@ KO_COLUMNS = [
 ]
 
 
+def decode_csv_bytes(raw):
+    """Decode CSV bytes using the best-fit encoding (Excel often saves as cp1252, not UTF-8)."""
+    if not isinstance(raw, bytes):
+        return raw if isinstance(raw, str) else str(raw)
+
+    if raw.startswith(b"\xff\xfe"):
+        return raw.decode("utf-16-le")
+    if raw.startswith(b"\xfe\xff"):
+        return raw.decode("utf-16-be")
+
+    best_text = None
+    best_replacements = None
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            text = raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        replacements = text.count("\ufffd")
+        if best_replacements is None or replacements < best_replacements:
+            best_replacements = replacements
+            best_text = text
+
+    return best_text if best_text is not None else raw.decode("utf-8", errors="replace")
+
+
 def normalize_sl(text):
     """Normalize subject lines for strict comparison (nametoken/case/whitespace only)."""
     value = (text or "").strip()
@@ -127,7 +152,7 @@ def parse_ko_document(file_obj):
         if raw[:2] == b"PK":
             raw = _xlsx_to_ko_csv_text(raw)
         else:
-            raw = raw.decode("utf-8", errors="replace")
+            raw = decode_csv_bytes(raw)
     elif not isinstance(raw, str):
         raw = str(raw)
 
