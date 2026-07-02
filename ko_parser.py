@@ -24,20 +24,33 @@ KO_COLUMNS = [
 
 
 def normalize_sl(text):
-    """Normalize subject lines for comparison ([INS1] vs ((NAMETOKEN)), dash variants, KO ? placeholders)."""
+    """Normalize subject lines for strict comparison (nametoken/case/whitespace only)."""
     value = (text or "").strip()
     value = NAMETOKEN_PATTERN.sub("[INS1]", value)
     value = INS1_PATTERN.sub("[INS1]", value)
     value = value.replace("\u2019", "'").replace("\u2018", "'")
-    # Unicode dashes/hyphens (export often uses U+2011 non-breaking hyphen)
+    value = re.sub(r"\s+", " ", value)
+    return value.casefold()
+
+
+def normalize_sl_loose(text):
+    """Loose normalization for detecting encoding-only differences (dash/? variants)."""
+    value = normalize_sl(text)
     dash_chars = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d"
     value = re.sub(f"[{re.escape(dash_chars)}]", "-", value)
-    # KO CSV exports sometimes replace special hyphens with literal "?"
     while re.search(r"(\w)\?(\w)", value):
         value = re.sub(r"(\w)\?(\w)", r"\1-\2", value)
     value = value.replace("\ufffd", "-")
-    value = re.sub(r"\s+", " ", value)
-    return value.casefold()
+    return value
+
+
+def classify_subject_status(export_subject, ko_subject):
+    """Return Match, Special character mismatch, or Subject mismatch."""
+    if normalize_sl(export_subject) == normalize_sl(ko_subject):
+        return "Match"
+    if normalize_sl_loose(export_subject) == normalize_sl_loose(ko_subject):
+        return "Special character mismatch"
+    return "Subject mismatch"
 
 
 def stream_id_to_keycode_stream(c_stream_id):
@@ -190,7 +203,7 @@ def _parse_ko_csv_text(raw):
 
 
 def validate_export_against_ko(export_rows, ko_rows):
-    """Compare export SL + Keycode4 values to KO document."""
+    """Compare export SL + Keycode4 values to KO document (strict on special characters)."""
     ko_by_jn_send_key = {}
     for row in ko_rows:
         ko_by_jn_send_key[(row["jn"], row["send"], row["keycode4"])] = row
@@ -209,6 +222,7 @@ def validate_export_against_ko(export_rows, ko_rows):
     mismatches = []
     export_only = []
     ko_only = []
+    seen_mismatch_keys = set()
 
     for key, export_row in export_index.items():
         if key in ko_index:
@@ -226,6 +240,7 @@ def validate_export_against_ko(export_rows, ko_rows):
         else:
             ko_row = ko_by_jn_send_key.get((key[0], key[1], key[2]))
             if ko_row:
+                status = classify_subject_status(export_row["subject"], ko_row["subject"])
                 mismatches.append(
                     {
                         "jn": export_row["jn"],
@@ -233,9 +248,10 @@ def validate_export_against_ko(export_rows, ko_rows):
                         "keycode4": export_row["keycode4"],
                         "export_subject": export_row["subject"],
                         "ko_subject": ko_row["subject"],
-                        "status": "Subject mismatch",
+                        "status": status,
                     }
                 )
+                seen_mismatch_keys.add((key[0], key[1], key[2]))
             else:
                 export_only.append(
                     {
@@ -250,6 +266,8 @@ def validate_export_against_ko(export_rows, ko_rows):
 
     for key, ko_row in ko_index.items():
         if key not in export_index:
+            if (key[0], key[1], key[2]) in seen_mismatch_keys:
+                continue
             ko_only.append(
                 {
                     "jn": ko_row["jn"],
