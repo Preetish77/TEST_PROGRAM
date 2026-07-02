@@ -8,6 +8,7 @@ from ko_parser import (
     build_keycode4,
     build_ko_aligned_csv,
     build_validation_csv,
+    decode_csv_bytes,
     export_sl_display,
     normalize_sl,
     order_to_send,
@@ -371,10 +372,31 @@ def build_job_numbers_csv(job_numbers):
     return buf.getvalue()
 
 
+def _fix_whole_line_quoted_csv(text):
+    """Some exports wrap each entire row in outer quotes, breaking csv parsing."""
+    lines = text.splitlines()
+    if not lines:
+        return text
+    first = lines[0].strip()
+    if not (first.startswith('"') and first.endswith('"') and "," in first[1:-1]):
+        return text
+    fixed = []
+    for line in lines:
+        line = line.strip()
+        if line.startswith('"') and line.endswith('"'):
+            line = line[1:-1]
+        # Excel doubles inner field quotes when the whole row is quoted; restore RFC CSV quoting.
+        line = re.sub(r',""', ',"', line)
+        line = re.sub(r'""(?=,|$)', '"', line)
+        fixed.append(line)
+    return "\n".join(fixed)
+
+
 def read_csv_rows(file_obj):
     text = file_obj.read()
     if isinstance(text, bytes):
-        text = text.decode("utf-8", errors="replace")
+        text = decode_csv_bytes(text)
+    text = _fix_whole_line_quoted_csv(text)
     reader = csv.DictReader(io.StringIO(text))
     fields = reader.fieldnames or []
     rows = list(reader)
