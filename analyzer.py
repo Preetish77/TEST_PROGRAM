@@ -479,7 +479,11 @@ def analyze_file(
     validation = validate_export_against_ko(export_sl_rows, ko_rows)
     result["ko_validation"] = validation
     result["ko_filename"] = ko_filename or "KO document"
-    result["exports"]["validation_csv"] = build_validation_csv(validation)
+    result["exports"]["validation_csv"] = build_validation_csv(
+        validation,
+        export_label=f"Subject — Export ({filename})",
+        ko_label=f"Subject — KO doc ({ko_filename or 'KO document'})",
+    )
     result["ko_reference_count"] = len(ko_rows)
 
     return result
