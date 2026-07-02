@@ -142,7 +142,10 @@ if "report" in st.session_state:
         )
 
     st.subheader("KO validation (delivered rows only)")
-    st.caption("**export_subject** = ((NAMETOKEN)) from export · **ko_subject** = [INS1] from KO")
+    st.caption(
+        "Strict comparison on **JN + Send + Keycode 4 + subject** (special characters must match exactly). "
+        "**Special character mismatch** = same words but different dashes/hyphens (`‑`, `—`, `?`, etc.)."
+    )
     all_results = (
         validation["matched"]
         + validation["mismatches"]
@@ -150,7 +153,18 @@ if "report" in st.session_state:
         + validation["ko_only"]
     )
     if all_results:
-        st.dataframe(all_results, use_container_width=True, hide_index=True)
+        display_rows = [
+            {
+                "Status": r["status"],
+                "JN": r["jn"],
+                "Send": r["send"],
+                "Keycode 4": r["keycode4"],
+                "Export Subject": r["export_subject"],
+                "KO Subject": r["ko_subject"],
+            }
+            for r in all_results
+        ]
+        st.dataframe(display_rows, use_container_width=True, hide_index=True)
     st.download_button(
         "Download validation report.csv",
         data=d["exports"]["validation_csv"],
