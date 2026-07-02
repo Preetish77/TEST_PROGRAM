@@ -340,10 +340,10 @@ def build_ko_aligned_csv(export_rows):
     return buf.getvalue()
 
 
-def build_validation_csv(validation):
+def build_validation_csv(validation, export_label="Subject (Campaign Export)", ko_label="Subject (KO Creative Details doc)"):
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Status", "JN", "Send", "Keycode 4", "Export Subject", "KO Subject"])
+    writer.writerow(["Status", "JN", "Send", "Keycode 4", export_label, ko_label])
     for group in ("matched", "mismatches", "export_only", "ko_only"):
         for row in validation[group]:
             writer.writerow(
