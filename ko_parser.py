@@ -159,6 +159,33 @@ def parse_ko_document(file_obj):
     return _parse_ko_csv_text(raw)
 
 
+def _flush_ko_block(block, records, ctx):
+    """Emit SL records from a parsed creative block."""
+    if not block:
+        return
+    jn = block.get("jn", "")
+    keycode4 = block.get("keycode4", "")
+    if not jn or not keycode4:
+        return
+    for entry in block.get("sl_entries", []):
+        subject = entry["subject"]
+        personalization = entry.get("personalization", "")
+        records.append(
+            {
+                "stream_name": ctx["stream"],
+                "creative_name": ctx["creative"],
+                "mlr_number": ctx["mlr"],
+                "jn": jn,
+                "send": entry["send"],
+                "subject": subject,
+                "subject_normalized": normalize_sl(subject),
+                "personalization": personalization,
+                "keycode4": keycode4,
+                "has_nametoken": "[INS1]" in subject.upper() or personalization.lower() == "yes",
+            }
+        )
+
+
 def _parse_ko_csv_text(raw):
     """Parse KO creative-details CSV into SL rows."""
     reader = csv.reader(io.StringIO(raw))
@@ -175,11 +202,9 @@ def _parse_ko_csv_text(raw):
             return default
         return (row[idx] or "").strip()
 
-    current_stream = ""
-    current_creative = ""
-    current_mlr = ""
-    current_jn = ""
-    current_keycode4 = ""
+    ctx = {"stream": "", "creative": "", "mlr": ""}
+    current_block = None
+    pending_jn = ""
     records = []
 
     for row in rows[1:]:
@@ -190,40 +215,40 @@ def _parse_ko_csv_text(raw):
         send = get(row, "Send")
         subject = get(row, "Subject Lines + Preheaders")
         personalization = get(row, "Personalization")
-        keycode4 = get(row, "Keycode 4")
+        keycode4 = get(row, "Keycode 4").strip().lower()
 
         if stream:
-            current_stream = stream
+            ctx["stream"] = stream
         if creative:
-            current_creative = creative.replace("\n", " ").strip()
+            ctx["creative"] = creative.replace("\n", " ").strip()
         if mlr:
-            current_mlr = mlr
-        if jn:
-            current_jn = jn
-            current_keycode4 = ""
-        if keycode4:
-            current_keycode4 = keycode4.lower()
+            ctx["mlr"] = mlr
 
-        if send not in KO_SEND_SL or not subject:
-            continue
-        if not current_jn:
-            continue
-
-        records.append(
-            {
-                "stream_name": current_stream,
-                "creative_name": current_creative,
-                "mlr_number": current_mlr,
-                "jn": current_jn,
-                "send": send,
-                "subject": subject,
-                "subject_normalized": normalize_sl(subject),
-                "personalization": personalization,
-                "keycode4": current_keycode4,
-                "has_nametoken": "[INS1]" in subject.upper() or personalization.lower() == "yes",
+        # New creative block starts on Initial: SL with Keycode 4.
+        if send == "Initial: SL" and keycode4:
+            _flush_ko_block(current_block, records, ctx)
+            current_block = {
+                "jn": jn or pending_jn,
+                "keycode4": keycode4,
+                "sl_entries": [],
             }
-        )
+            pending_jn = ""
+        elif jn:
+            if current_block is not None:
+                current_block["jn"] = jn
+            else:
+                pending_jn = jn
 
+        if send in KO_SEND_SL and subject and current_block is not None:
+            current_block["sl_entries"].append(
+                {
+                    "send": send,
+                    "subject": subject,
+                    "personalization": personalization,
+                }
+            )
+
+    _flush_ko_block(current_block, records, ctx)
     return records
 
 
