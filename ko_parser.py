@@ -71,6 +71,12 @@ def normalize_sl_loose(text):
 
 def classify_subject_status(export_subject, ko_subject):
     """Return Match, Special character mismatch, or Subject mismatch."""
+    export_text = (export_subject or "").strip()
+    ko_text = (ko_subject or "").strip()
+    if not export_text and not ko_text:
+        return "Match"
+    if bool(export_text) != bool(ko_text):
+        return "Subject mismatch"
     if normalize_sl(export_subject) == normalize_sl(ko_subject):
         return "Match"
     if normalize_sl_loose(export_subject) == normalize_sl_loose(ko_subject):
@@ -251,7 +257,7 @@ def _parse_ko_csv_text(raw):
             else:
                 pending_jn = jn
 
-        if send in KO_SEND_SL and subject and current_block is not None:
+        if send in KO_SEND_SL and current_block is not None:
             current_block["sl_entries"].append(
                 {
                     "send": send,
@@ -270,11 +276,33 @@ def keycode4_creative(keycode4):
     return parts[1] if len(parts) == 2 else (keycode4 or "")
 
 
+def _ko_slot_has_sl(ko_row):
+    return bool((ko_row.get("subject") or "").strip())
+
+
+def _make_empty_ko_slot(stream, creative, send, template_row=None):
+    """Placeholder for an expected EM slot with no SL content in the KO doc."""
+    keycode4 = f"{stream}|{creative}"
+    base = template_row or {}
+    return {
+        "stream_name": base.get("stream_name", ""),
+        "creative_name": base.get("creative_name", ""),
+        "mlr_number": base.get("mlr_number", ""),
+        "jn": base.get("jn", ""),
+        "send": send,
+        "subject": "",
+        "subject_normalized": "",
+        "personalization": "",
+        "keycode4": keycode4,
+        "has_nametoken": False,
+    }
+
+
 def build_ko_stream_em_index(ko_rows):
     """
-    Index KO SL rows by (stream, em_num) following Creative Details block order.
+    Index ALL expected KO EM slots by (stream, em_num) in Creative Details block order.
     Within each stream: EM01=1st creative Initial, EM02=1st creative Echo, EM03=2nd Initial, etc.
-    Also builds fallback index by (creative, send, subject_normalized).
+    Missing or blank Echo/Initial rows still occupy their EM slot.
     """
     stream_creative_order = {}
     stream_creative_rows = {}
@@ -292,70 +320,87 @@ def build_ko_stream_em_index(ko_rows):
         stream_creative_rows.setdefault((stream, creative), {})[row["send"]] = row
 
     by_stream_em = {}
-    by_creative_send_subject = {}
-    ko_row_em = {}
 
     for stream, creatives in stream_creative_order.items():
         em_num = 1
         for creative in creatives:
             rows_for_creative = stream_creative_rows.get((stream, creative), {})
+            template = rows_for_creative.get("Initial: SL") or rows_for_creative.get("Echo: SL")
             for send in KO_SEND_SL:
                 ko_row = rows_for_creative.get(send)
                 if ko_row is None:
-                    continue
+                    ko_row = _make_empty_ko_slot(stream, creative, send, template)
                 by_stream_em[(stream, em_num)] = ko_row
-                ko_row_em[id(ko_row)] = em_num
-                sk = (creative, send, ko_row["subject_normalized"])
-                by_creative_send_subject.setdefault(sk, []).append(ko_row)
                 em_num += 1
 
-    return by_stream_em, by_creative_send_subject, ko_row_em
+    return by_stream_em
 
 
-def _match_status_label(export_row, ko_row):
-    """Return Match / Special character mismatch / Subject mismatch (SL-focused)."""
-    return classify_subject_status(export_row["subject"], ko_row["subject"])
+def _find_ko_slot(by_stream_em, export_stream, em_num, creative):
+    """
+    Find KO slot for export row: primary (stream, em_num), then stream-remap by EM + creative.
+    Returns (ko_row, stream_aligned).
+    """
+    creative = (creative or "").strip().lower()
+    if export_stream and em_num:
+        slot = by_stream_em.get((export_stream, em_num))
+        if slot and keycode4_creative(slot["keycode4"]).lower() == creative:
+            return slot, True
+        if slot:
+            slot = None
+
+    if em_num and creative:
+        for (ko_stream, ko_em), candidate in by_stream_em.items():
+            if ko_em != em_num:
+                continue
+            if keycode4_creative(candidate["keycode4"]).lower() != creative:
+                continue
+            return candidate, export_stream == ko_stream
+    return None, False
 
 
-def _match_record(export_row, ko_row, status):
+def _validation_record(export_row, ko_row, status, em_num=None):
     record = {
-        "jn": export_row["jn"],
-        "send": export_row["send"],
-        "keycode4": export_row["keycode4"],
-        "export_subject": export_row["subject"],
-        "ko_subject": ko_row["subject"],
+        "jn": export_row["jn"] if export_row else (ko_row or {}).get("jn", ""),
+        "send": (export_row or ko_row)["send"],
+        "keycode4": (export_row or ko_row).get("keycode4", ""),
+        "export_subject": (export_row or {}).get("subject", ""),
+        "ko_subject": (ko_row or {}).get("subject", ""),
         "status": status,
-        "c_stream_id": export_row.get("c_stream_id", ""),
-        "c_order_id": export_row.get("c_order_id", ""),
-        "c_creative_id": export_row.get("c_creative_id", ""),
-        "em_num": export_row.get("em_num"),
+        "c_stream_id": (export_row or {}).get("c_stream_id", ""),
+        "c_order_id": (export_row or {}).get("c_order_id", ""),
+        "c_creative_id": (export_row or {}).get("c_creative_id", ""),
+        "em_num": em_num if em_num is not None else (export_row or {}).get("em_num"),
     }
-    if ko_row["jn"] != export_row["jn"]:
-        record["ko_jn"] = ko_row["jn"]
-    if ko_row["keycode4"] != export_row["keycode4"]:
-        record["ko_keycode4"] = ko_row["keycode4"]
-    ko_stream = (ko_row.get("keycode4") or "").split("|")[0]
-    export_stream = stream_id_to_keycode_stream(export_row.get("c_stream_id"))
-    if ko_stream and export_stream and ko_stream != export_stream:
-        record["ko_stream"] = ko_stream
+    if export_row and ko_row:
+        if ko_row.get("jn") and ko_row["jn"] != export_row["jn"]:
+            record["ko_jn"] = ko_row["jn"]
+        if ko_row.get("keycode4") and ko_row["keycode4"] != export_row.get("keycode4"):
+            record["ko_keycode4"] = ko_row["keycode4"]
+        ko_stream = (ko_row.get("keycode4") or "").split("|")[0]
+        export_stream = stream_id_to_keycode_stream(export_row.get("c_stream_id"))
+        if ko_stream and export_stream and ko_stream != export_stream:
+            record["ko_stream"] = ko_stream
+    elif ko_row:
+        record["keycode4"] = ko_row.get("keycode4", record["keycode4"])
+        record["send"] = ko_row.get("send", record["send"])
+        if not record["c_creative_id"]:
+            record["c_creative_id"] = keycode4_creative(ko_row.get("keycode4", ""))
     return record
 
 
 def validate_export_against_ko(export_rows, ko_rows):
     """
     Compare export SL rows to KO document using stream + EM order + creative + subject.
-    Primary key: (stream from c_stream_id, EM number). Fallback: creative + send + subject
-    when test export uses different stream numbers than production KO.
+    Every EM slot is indexed in the KO doc (including blank/missing Echo SL).
     """
-    by_stream_em, by_creative_send_subject, ko_row_em = build_ko_stream_em_index(ko_rows)
+    by_stream_em = build_ko_stream_em_index(ko_rows)
 
     matched = []
     mismatches = []
     export_only = []
     ko_only = []
-    matched_ko_keys = set()
-    matched_ko_css_keys = set()
-    seen_mismatch_keys = set()
+    matched_slot_keys = set()
 
     for export_row in export_rows:
         export_stream = stream_id_to_keycode_stream(export_row.get("c_stream_id"))
@@ -363,78 +408,73 @@ def validate_export_against_ko(export_rows, ko_rows):
         if em_num is None:
             em_num = parse_em_number(export_row.get("c_order_id"))
 
-        creative = (export_row.get("c_creative_id") or keycode4_creative(export_row.get("keycode4"))).strip().lower()
-        send = export_row["send"]
-        subject_norm = export_row["subject_normalized"]
+        creative = (
+            export_row.get("c_creative_id") or keycode4_creative(export_row.get("keycode4"))
+        ).strip().lower()
+        export_has = _ko_slot_has_sl(export_row)
 
-        ko_row = None
-        stream_aligned = False
-        em_aligned = False
-
-        if export_stream and em_num:
-            ko_row = by_stream_em.get((export_stream, em_num))
-            if ko_row:
-                stream_aligned = True
-                em_aligned = True
-                ko_creative = keycode4_creative(ko_row["keycode4"])
-                if ko_creative != creative:
-                    ko_row = None
-
-        if ko_row is None:
-            css_key = (creative, send, subject_norm)
-            candidates = by_creative_send_subject.get(css_key, [])
-            if candidates:
-                ko_row = candidates[0]
-                ko_stream = (ko_row.get("keycode4") or "").split("|")[0]
-                stream_aligned = export_stream == ko_stream
-                ko_em = ko_row_em.get(id(ko_row))
-                em_aligned = em_num == ko_em if em_num and ko_em else False
+        ko_row, stream_aligned = _find_ko_slot(by_stream_em, export_stream, em_num, creative)
 
         if ko_row is None:
             export_only.append(
-                {
-                    "jn": export_row["jn"],
-                    "send": export_row["send"],
-                    "keycode4": export_row["keycode4"],
-                    "export_subject": export_row["subject"],
-                    "ko_subject": "",
-                    "status": "Not in KO doc",
-                    "c_stream_id": export_row.get("c_stream_id", ""),
-                    "c_order_id": export_row.get("c_order_id", ""),
-                    "c_creative_id": export_row.get("c_creative_id", ""),
-                    "em_num": em_num,
-                }
+                _validation_record(
+                    export_row,
+                    None,
+                    "Not in KO doc",
+                    em_num=em_num,
+                )
             )
             continue
 
-        status = _match_status_label(export_row, ko_row)
-        record = _match_record(export_row, ko_row, status)
+        ko_has = _ko_slot_has_sl(ko_row)
+        ko_stream = (ko_row.get("keycode4") or "").split("|")[0]
+        slot_key = (em_num, creative, export_row["send"])
 
-        if status == "Match" or status.startswith("Match ("):
+        if export_has and not ko_has:
+            mismatches.append(
+                _validation_record(export_row, ko_row, "Missing in KO", em_num=em_num)
+            )
+            continue
+
+        if not export_has and ko_has:
+            mismatches.append(
+                _validation_record(export_row, ko_row, "Missing in export", em_num=em_num)
+            )
+            continue
+
+        if not export_has and not ko_has:
+            matched_slot_keys.add(slot_key)
+            continue
+
+        status = classify_subject_status(export_row["subject"], ko_row["subject"])
+        record = _validation_record(export_row, ko_row, status, em_num=em_num)
+
+        if status == "Match":
             matched.append(record)
-            matched_ko_keys.add((ko_row["jn"], ko_row["send"], ko_row["keycode4"], ko_row["subject_normalized"]))
-            matched_ko_css_keys.add((creative, send, subject_norm))
+            matched_slot_keys.add(slot_key)
         else:
             mismatches.append(record)
-            seen_mismatch_keys.add((export_row["jn"], export_row["send"], export_row["keycode4"]))
 
-    for ko_row in ko_rows:
-        exact_key = (ko_row["jn"], ko_row["send"], ko_row["keycode4"], ko_row["subject_normalized"])
-        if exact_key in matched_ko_keys:
+    for (stream, em_num), ko_row in by_stream_em.items():
+        if not _ko_slot_has_sl(ko_row):
             continue
-        css_key = (keycode4_creative(ko_row["keycode4"]), ko_row["send"], ko_row["subject_normalized"])
-        if css_key in matched_ko_css_keys:
-            continue
-        if (ko_row["jn"], ko_row["send"], ko_row["keycode4"]) in seen_mismatch_keys:
+        creative = keycode4_creative(ko_row["keycode4"]).lower()
+        slot_key = (em_num, creative, ko_row["send"])
+        if slot_key in matched_slot_keys:
             continue
         ko_only.append(
             {
-                "jn": ko_row["jn"],
+                "jn": ko_row.get("jn", ""),
                 "send": ko_row["send"],
-                "keycode4": ko_row["keycode4"],
+                "keycode4": ko_row.get("keycode4", ""),
                 "export_subject": "",
                 "ko_subject": ko_row["subject"],
-                "status": "Missing from export",
+                "status": "Missing in export",
+                "c_stream_id": "",
+                "c_order_id": f"EM{em_num:02d}",
+                "c_creative_id": creative,
+                "em_num": em_num,
+                "ko_jn": ko_row.get("jn", ""),
             }
         )
 
