@@ -312,23 +312,9 @@ def build_ko_stream_em_index(ko_rows):
     return by_stream_em, by_creative_send_subject, ko_row_em
 
 
-def _match_status_label(export_row, ko_row, stream_aligned, em_aligned):
-    """Build a clear validation status from alignment flags."""
-    subject_status = classify_subject_status(export_row["subject"], ko_row["subject"])
-    if subject_status != "Match":
-        return subject_status
-
-    notes = []
-    if not stream_aligned:
-        notes.append("KO stream differs")
-    if not em_aligned:
-        notes.append("EM order differs")
-    if ko_row["jn"] != export_row["jn"]:
-        notes.append("KO JN differs")
-
-    if notes:
-        return f"Match ({'; '.join(notes)})"
-    return "Match"
+def _match_status_label(export_row, ko_row):
+    """Return Match / Special character mismatch / Subject mismatch (SL-focused)."""
+    return classify_subject_status(export_row["subject"], ko_row["subject"])
 
 
 def _match_record(export_row, ko_row, status):
@@ -421,7 +407,7 @@ def validate_export_against_ko(export_rows, ko_rows):
             )
             continue
 
-        status = _match_status_label(export_row, ko_row, stream_aligned, em_aligned)
+        status = _match_status_label(export_row, ko_row)
         record = _match_record(export_row, ko_row, status)
 
         if status == "Match" or status.startswith("Match ("):
