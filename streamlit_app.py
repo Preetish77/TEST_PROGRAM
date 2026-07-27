@@ -144,8 +144,8 @@ if "report" in st.session_state:
     st.subheader("KO validation (delivered rows only)")
     st.caption(
         f"Comparing **Export:** `{d['filename']}` vs **KO doc:** `{d.get('ko_filename', 'KO document')}` · "
-        "Match on stream + EM order + c_creative_id + subject (delivered SL rows only). "
-        "JN differences are informational in the export CSV, not validation failures."
+        "Strict match on stream + EM order + c_creative_id + subject. "
+        "Blank/missing Echo or Initial SL in either file is flagged (Missing in KO / Missing in export)."
     )
     all_results = (
         validation["matched"]
