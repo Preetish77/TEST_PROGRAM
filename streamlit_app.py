@@ -175,21 +175,32 @@ if "report" in st.session_state:
         mime="text/csv",
     )
 
-    st.subheader("Keycode 4 vs c_creative_id (export check)")
+    st.subheader("Keycode 4 vs c_creative_id (export + KO check)")
     st.caption(
         "Keycode 4 = **stream** + **|** + **c_creative_id** (e.g. `stream1|breast`). "
-        "This checks the creative part after `|` matches **c_creative_id** in the export."
+        "Checks export rows align internally and every KO stream|creative combo has a delivered export row."
     )
     kc = d.get("keycode4_validation", {})
     if kc:
-        k1, k2, k3 = st.columns(3)
+        k1, k2, k3, k4, k5 = st.columns(5)
         k1.metric("Keycode 4 OK", kc["match_count"])
         k2.metric("Mismatches", kc["mismatch_count"])
-        k3.metric("Incomplete rows", kc["incomplete_count"])
-        if kc["mismatch_count"] == 0 and kc["incomplete_count"] == 0:
-            st.success("All Keycode 4 values align with c_stream_id and c_creative_id.")
-        elif kc["mismatch_count"] or kc["incomplete_count"]:
-            st.warning("Some Keycode 4 / c_creative_id combinations need review.")
+        k3.metric("Missing in export", kc.get("missing_in_export_count", 0))
+        k4.metric("Not in KO doc", kc.get("export_only_count", 0))
+        k5.metric("Incomplete rows", kc["incomplete_count"])
+        kc_issues = (
+            kc["mismatch_count"]
+            or kc["incomplete_count"]
+            or kc.get("missing_in_export_count", 0)
+            or kc.get("export_only_count", 0)
+        )
+        if not kc_issues:
+            st.success(
+                "All Keycode 4 values align with c_stream_id and c_creative_id, "
+                "and every KO stream|creative combo is present in the export."
+            )
+        else:
+            st.warning("Some Keycode 4 / KO stream|creative combinations need review.")
         if kc["rows"]:
             st.dataframe(
                 [
