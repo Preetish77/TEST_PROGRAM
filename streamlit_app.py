@@ -144,7 +144,8 @@ if "report" in st.session_state:
     st.subheader("KO validation (delivered rows only)")
     st.caption(
         f"Comparing **Export:** `{d['filename']}` vs **KO doc:** `{d.get('ko_filename', 'KO document')}` · "
-        "Strict match on JN + Send + Keycode 4 + subject."
+        "Match on stream + EM order + c_creative_id + subject (delivered SL rows only). "
+        "JN differences are informational in the export CSV, not validation failures."
     )
     all_results = (
         validation["matched"]
