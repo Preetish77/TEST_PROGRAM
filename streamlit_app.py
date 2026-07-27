@@ -125,12 +125,14 @@ if "report" in st.session_state:
     st.subheader("Filters applied")
     st.json(d["filters_applied"])
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     m1.metric("Rows (filtered)", f"{d['row_count']:,}")
     m2.metric("Delivered", summ["row_counts"]["delivered_after_filter"])
     m3.metric("SL rows (delivered)", ex["export_sl_row_count"])
     m4.metric("KO matches", validation["match_count"])
     m5.metric("KO mismatches", validation["mismatch_count"])
+    m6.metric("Missing in export", validation.get("missing_in_export_count", 0))
+    m7.metric("Missing in KO", validation.get("missing_in_ko_count", 0))
 
     if validation["mismatch_count"] == 0 and validation["export_only_count"] == 0 and validation["ko_only_count"] == 0:
         st.success("All delivered SL and Keycode 4 values match the KO document.")
