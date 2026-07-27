@@ -478,6 +478,11 @@ def validate_export_against_ko(export_rows, ko_rows):
             }
         )
 
+    missing_in_export = [
+        r for r in mismatches + ko_only if r["status"] == "Missing in export"
+    ]
+    missing_in_ko = [r for r in mismatches if r["status"] == "Missing in KO"]
+
     return {
         "matched": matched,
         "mismatches": mismatches,
@@ -487,6 +492,8 @@ def validate_export_against_ko(export_rows, ko_rows):
         "mismatch_count": len(mismatches),
         "export_only_count": len(export_only),
         "ko_only_count": len(ko_only),
+        "missing_in_export_count": len(missing_in_export),
+        "missing_in_ko_count": len(missing_in_ko),
     }
 
 
