@@ -12,6 +12,7 @@ from ko_parser import (
     export_sl_display,
     normalize_sl,
     order_to_send,
+    parse_em_number,
     parse_ko_document,
     stream_id_to_keycode_stream,
     validate_export_against_ko,
@@ -331,11 +332,13 @@ def extract_export_sl_rows(rows, delivered_only=True):
 
         keycode4 = build_keycode4(stream_id, creative_id)
         ko_subject = export_sl_display(subject, has_nametoken)
+        em_num = parse_em_number(order_id)
         record = {
             "action_name": action_name,
             "jn": jn,
             "c_stream_id": stream_id,
             "c_order_id": order_id,
+            "em_num": em_num,
             "send": send,
             "subject": subject,
             "subject_ko_format": ko_subject,
@@ -345,12 +348,17 @@ def extract_export_sl_rows(rows, delivered_only=True):
             "has_nametoken": has_nametoken,
             "personalization": "Yes" if has_nametoken else "No",
         }
-        dedupe_key = (jn, send, keycode4 or "", record["subject_normalized"])
+        dedupe_key = (stream_id, em_num, creative_id.lower(), record["subject_normalized"])
         seen[dedupe_key] = record
 
     return sorted(
         seen.values(),
-        key=lambda item: (item["jn"], item["send"], item["keycode4"], item["subject_normalized"]),
+        key=lambda item: (
+            item["c_stream_id"],
+            item.get("em_num") or 0,
+            item["c_creative_id"],
+            item["subject_normalized"],
+        ),
     )
 
 
