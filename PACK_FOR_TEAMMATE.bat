@@ -8,6 +8,7 @@ mkdir "%OUT%"
 mkdir "%OUT%\templates"
 
 copy /Y START_APP.bat "%OUT%\"
+copy /Y CHECK_SETUP.bat "%OUT%\"
 copy /Y SHARE_APP.bat "%OUT%\" 2>nul
 copy /Y app.py "%OUT%\"
 copy /Y ko_parser.py "%OUT%\"
