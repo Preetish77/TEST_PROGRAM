@@ -12,6 +12,7 @@ from ko_parser import (
     export_sl_display,
     normalize_sl,
     order_to_send,
+    parse_em_number,
     parse_ko_document,
     stream_id_to_keycode_stream,
     validate_export_against_ko,
@@ -207,13 +208,37 @@ def split_keycode4(keycode4):
     return stream.strip(), creative.strip()
 
 
-def validate_export_keycode4(rows, delivered_only=True):
+def keycode_stream_to_stream_id(keycode_stream):
+    match = re.match(r"stream(\d+)", (keycode_stream or "").strip(), re.I)
+    if match:
+        return f"S{int(match.group(1)):02d}"
+    return ""
+
+
+def get_ko_keycode4_combos(ko_rows):
+    """Unique stream|creative pairs expected from KO Creative Details."""
+    combos = {}
+    for row in ko_rows:
+        keycode4 = (row.get("keycode4") or "").strip().lower()
+        k_stream, k_creative = split_keycode4(keycode4)
+        if not k_stream or not k_creative:
+            continue
+        combos[(k_stream, k_creative)] = {
+            "keycode4": keycode4,
+            "jn": row.get("jn", ""),
+        }
+    return combos
+
+
+def validate_export_keycode4(rows, ko_rows=None, delivered_only=True):
     """
-    Verify Keycode 4 in export aligns with c_stream_id and c_creative_id.
+    Verify Keycode 4 in export aligns with c_stream_id and c_creative_id, and that
+    every KO stream|creative combo has a delivered export row (when ko_rows provided).
     Keycode 4 format: stream{N}|{c_creative_id} — creative part must match c_creative_id.
     """
     seen = {}
     incomplete = []
+    export_combos = set()
 
     for row in rows:
         if delivered_only and (row.get("status") or "").strip().lower() != DELIVERED_STATUS:
@@ -259,21 +284,65 @@ def validate_export_keycode4(rows, delivered_only=True):
         }
         dedupe_key = (stream_id, creative_id_lower, keycode4.lower())
         seen[dedupe_key] = record
+        if k_stream and k_creative:
+            export_combos.add((k_stream, k_creative))
 
-    rows_out = sorted(
-        seen.values(),
+    rows_out = list(seen.values())
+    missing_in_export = []
+
+    if ko_rows:
+        ko_combos = get_ko_keycode4_combos(ko_rows)
+        ko_keys = set(ko_combos.keys())
+
+        for stream, creative in sorted(ko_keys - export_combos):
+            info = ko_combos[(stream, creative)]
+            missing_in_export.append(
+                {
+                    "jn": info["jn"],
+                    "c_order_id": "",
+                    "c_stream_id": keycode_stream_to_stream_id(stream),
+                    "c_creative_id": creative,
+                    "keycode4": info["keycode4"],
+                    "keycode4_stream_part": stream,
+                    "keycode4_creative_part": creative,
+                    "expected_stream": stream,
+                    "stream_match": "",
+                    "creative_match": "",
+                    "status": "Missing in export",
+                }
+            )
+
+        for record in rows_out:
+            k_stream = record.get("keycode4_stream_part")
+            k_creative = record.get("keycode4_creative_part")
+            if (
+                k_stream
+                and k_creative
+                and (k_stream, k_creative) not in ko_keys
+                and record["status"] == "OK"
+            ):
+                record["status"] = "Not in KO doc"
+
+    all_rows = sorted(
+        rows_out + missing_in_export,
         key=lambda item: (item["c_stream_id"], item["c_creative_id"], item["keycode4"]),
     )
-    matched = [r for r in rows_out if r["status"] == "OK"]
-    mismatches = [r for r in rows_out if r["status"] == "Mismatch"]
+    matched = [r for r in all_rows if r["status"] == "OK"]
+    mismatches = [r for r in all_rows if r["status"] == "Mismatch"]
+    missing = [r for r in all_rows if r["status"] == "Missing in export"]
+    export_only = [r for r in all_rows if r["status"] == "Not in KO doc"]
 
     return {
-        "rows": rows_out,
+        "rows": all_rows,
         "match_count": len(matched),
         "mismatch_count": len(mismatches),
         "incomplete_count": len(incomplete),
+        "missing_in_export_count": len(missing),
+        "export_only_count": len(export_only),
         "matched": matched,
         "mismatches": mismatches,
+        "missing_in_export": missing,
+        "export_only": export_only,
         "incomplete": incomplete,
     }
 
@@ -331,11 +400,13 @@ def extract_export_sl_rows(rows, delivered_only=True):
 
         keycode4 = build_keycode4(stream_id, creative_id)
         ko_subject = export_sl_display(subject, has_nametoken)
+        em_num = parse_em_number(order_id)
         record = {
             "action_name": action_name,
             "jn": jn,
             "c_stream_id": stream_id,
             "c_order_id": order_id,
+            "em_num": em_num,
             "send": send,
             "subject": subject,
             "subject_ko_format": ko_subject,
@@ -345,12 +416,17 @@ def extract_export_sl_rows(rows, delivered_only=True):
             "has_nametoken": has_nametoken,
             "personalization": "Yes" if has_nametoken else "No",
         }
-        dedupe_key = (jn, send, keycode4 or "", record["subject_normalized"])
+        dedupe_key = (stream_id, em_num, creative_id.lower(), record["subject_normalized"])
         seen[dedupe_key] = record
 
     return sorted(
         seen.values(),
-        key=lambda item: (item["jn"], item["send"], item["keycode4"], item["subject_normalized"]),
+        key=lambda item: (
+            item["c_stream_id"],
+            item.get("em_num") or 0,
+            item["c_creative_id"],
+            item["subject_normalized"],
+        ),
     )
 
 
@@ -433,7 +509,10 @@ def analyze_file(
     )
     unique_job_numbers = extract_unique_job_numbers(filtered_rows)
     export_sl_rows = extract_export_sl_rows(filtered_rows, delivered_only=True)
-    keycode4_validation = validate_export_keycode4(filtered_rows, delivered_only=True)
+    ko_rows = parse_ko_document(ko_file_obj)
+    keycode4_validation = validate_export_keycode4(
+        filtered_rows, ko_rows=ko_rows, delivered_only=True
+    )
 
     if not export_sl_rows:
         raise ValueError(
@@ -475,7 +554,6 @@ def analyze_file(
         "ko_validation": None,
     }
 
-    ko_rows = parse_ko_document(ko_file_obj)
     validation = validate_export_against_ko(export_sl_rows, ko_rows)
     result["ko_validation"] = validation
     result["ko_filename"] = ko_filename or "KO document"
