@@ -2,6 +2,8 @@
 
 Upload campaign export files and view delivery, engagement, and status reports in your browser.
 
+_Last updated: Jul 31, 2026 — sync test._
+
 **Live app:** Deploy on [Streamlit Cloud](https://share.streamlit.io) using `streamlit_app.py`.
 
 ## Files for deployment
